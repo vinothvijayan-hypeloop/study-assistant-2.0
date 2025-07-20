@@ -104,9 +104,13 @@ export const saveStudyHistory = async (
       data,
       fileUrls,
       analysisData,
-      quizData,
-      pageAnalysesMap: options.pageAnalysesMap
+      quizData
     };
+
+    // Only include pageAnalysesMap if it's defined
+    if (options.pageAnalysesMap !== undefined) {
+      record.pageAnalysesMap = options.pageAnalysesMap;
+    }
 
     // Only include score, totalQuestions, and percentage if they are defined
     if (options.score !== undefined) {
