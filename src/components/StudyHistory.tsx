@@ -2,18 +2,31 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { History, Download, Trash2, Calendar, FileText, Trophy } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { History, Download, Trash2, Calendar, FileText, Trophy, Filter, Search, RefreshCw, Play } from "lucide-react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "@/config/firebase";
 import { getStudyHistory, deleteStudyHistory, StudyHistoryRecord } from "@/services/studyHistoryService";
 import { toast } from "sonner";
 import { downloadPDF } from "@/utils/pdfUtils";
+import { useAppContext } from "@/contexts/AppContext";
+import { generateQuestions } from "@/services/geminiService";
+import { QuestionResult } from "./StudyAssistant";
 
 
 const StudyHistory = () => {
   const [user] = useAuthState(auth);
   const [studyHistory, setStudyHistory] = useState<StudyHistoryRecord[]>([]);
+  const [filteredHistory, setFilteredHistory] = useState<StudyHistoryRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [filterType, setFilterType] = useState<"all" | "analysis" | "quiz">("all");
+  const [filterDifficulty, setFilterDifficulty] = useState<string>("all");
+  const [filterLanguage, setFilterLanguage] = useState<string>("all");
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [isRetakingQuiz, setIsRetakingQuiz] = useState<string | null>(null);
+  
+  const { setQuestionResult, setDifficulty, setOutputLanguage } = useAppContext();
 
   useEffect(() => {
     if (user) {
@@ -22,6 +35,39 @@ const StudyHistory = () => {
       setIsLoading(false); // Stop loading if there's no user
     }
   }, [user]);
+
+  useEffect(() => {
+    applyFilters();
+  }, [studyHistory, filterType, filterDifficulty, filterLanguage, searchTerm]);
+
+  const applyFilters = () => {
+    let filtered = [...studyHistory];
+
+    // Filter by type
+    if (filterType !== "all") {
+      filtered = filtered.filter(record => record.type === filterType);
+    }
+
+    // Filter by difficulty
+    if (filterDifficulty !== "all") {
+      filtered = filtered.filter(record => record.difficulty === filterDifficulty);
+    }
+
+    // Filter by language
+    if (filterLanguage !== "all") {
+      filtered = filtered.filter(record => record.language === filterLanguage);
+    }
+
+    // Filter by search term
+    if (searchTerm.trim()) {
+      filtered = filtered.filter(record => 
+        record.fileName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        record.type.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    setFilteredHistory(filtered);
+  };
 
   const fetchStudyHistory = async () => {
     if (!user) return;
@@ -89,6 +135,41 @@ const StudyHistory = () => {
     }
   };
 
+  const handleRetakeQuiz = async (record: StudyHistoryRecord) => {
+    if (!record.analysisData) {
+      toast.error("Cannot retake quiz: Original analysis data not found");
+      return;
+    }
+
+    setIsRetakingQuiz(record.id!);
+    try {
+      // Generate new questions from the original analysis data
+      const result = await generateQuestions([record.analysisData], record.difficulty, record.language as "english" | "tamil");
+      
+      setQuestionResult({
+        ...result,
+        totalQuestions: result.questions?.length || 0
+      });
+      setDifficulty(record.difficulty);
+      setOutputLanguage(record.language as "english" | "tamil");
+      
+      toast.success("New quiz generated! Starting quiz...");
+      // The parent component will handle navigation to quiz mode
+    } catch (error) {
+      console.error("Error generating retake quiz:", error);
+      toast.error("Failed to generate new quiz. Please try again.");
+    } finally {
+      setIsRetakingQuiz(null);
+    }
+  };
+
+  const clearFilters = () => {
+    setFilterType("all");
+    setFilterDifficulty("all");
+    setFilterLanguage("all");
+    setSearchTerm("");
+  };
+
   const getScoreColor = (score: number, total: number) => {
     const percentage = (score / total) * 100;
     if (percentage >= 80) return "text-green-600 bg-green-50";
@@ -96,6 +177,14 @@ const StudyHistory = () => {
     if (percentage >= 40) return "text-orange-600 bg-orange-50";
     return "text-red-600 bg-red-50";
   };
+
+  const getUniqueValues = (key: keyof StudyHistoryRecord) => {
+    const values = studyHistory.map(record => record[key]).filter(Boolean);
+    return [...new Set(values)];
+  };
+
+  const analysisRecords = filteredHistory.filter(h => h.type === "analysis");
+  const quizRecords = filteredHistory.filter(h => h.type === "quiz");
 
   if (!user && !isLoading) {
     return (
@@ -140,30 +229,115 @@ const StudyHistory = () => {
               </div>
               <div className="text-center p-3 bg-green-50 rounded-lg">
                 <div className="text-2xl font-bold text-green-600">
-                  {studyHistory.filter(h => h.type === "analysis").length}
+                  {analysisRecords.length}
                 </div>
                 <div className="text-sm text-green-700">Analyses</div>
               </div>
               <div className="text-center p-3 bg-purple-50 rounded-lg">
                 <div className="text-2xl font-bold text-purple-600">
-                  {studyHistory.filter(h => h.type === "quiz").length}
+                  {quizRecords.length}
                 </div>
                 <div className="text-sm text-purple-700">Quizzes</div>
               </div>
               <div className="text-center p-3 bg-orange-50 rounded-lg">
                 <div className="text-2xl font-bold text-orange-600">
-                  {Math.round(studyHistory.filter(h => h.type === "quiz").reduce((acc, h) => 
+                  {Math.round(quizRecords.reduce((acc, h) => 
                     acc + (h.score || 0) / (h.totalQuestions || 1), 0
-                  ) / Math.max(studyHistory.filter(h => h.type === "quiz").length, 1) * 100) || 0}%
+                  ) / Math.max(quizRecords.length, 1) * 100) || 0}%
                 </div>
                 <div className="text-sm text-orange-700">Avg Score</div>
               </div>
             </div>
           </Card>
 
+          {/* Filters */}
+          <Card className="p-6 bg-white/90 backdrop-blur-sm shadow-xl border-0">
+            <div className="flex items-center gap-3 mb-4">
+              <Filter className="h-5 w-5 text-blue-600" />
+              <h3 className="text-lg font-semibold text-gray-800">Filter & Search</h3>
+              <Button
+                onClick={clearFilters}
+                variant="outline"
+                size="sm"
+                className="ml-auto"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Clear Filters
+              </Button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
+                <Select value={filterType} onValueChange={(value: "all" | "analysis" | "quiz") => setFilterType(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="analysis">Document Analysis</SelectItem>
+                    <SelectItem value="quiz">Quiz Sessions</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Difficulty</label>
+                <Select value={filterDifficulty} onValueChange={setFilterDifficulty}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Difficulties" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Difficulties</SelectItem>
+                    {getUniqueValues('difficulty').map(difficulty => (
+                      <SelectItem key={difficulty} value={difficulty}>
+                        {difficulty.toUpperCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Language</label>
+                <Select value={filterLanguage} onValueChange={setFilterLanguage}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Languages" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Languages</SelectItem>
+                    {getUniqueValues('language').map(language => (
+                      <SelectItem key={language} value={language}>
+                        {language === "tamil" ? "தமிழ்" : "English"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input
+                    placeholder="Search by filename..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <div className="text-sm text-gray-600">
+              Showing {filteredHistory.length} of {studyHistory.length} records
+            </div>
+          </Card>
+
           {/* History List */}
           <div className="space-y-4">
-            {studyHistory.length === 0 ? (
+            {filteredHistory.length === 0 ? (
+              studyHistory.length === 0 ? (
               <Card className="p-8 text-center bg-white/90 backdrop-blur-sm shadow-xl border-0">
                 <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">No Study History</h3>
@@ -171,8 +345,20 @@ const StudyHistory = () => {
                   Start analyzing documents and taking quizzes to build your study history.
                 </p>
               </Card>
+              ) : (
+                <Card className="p-8 text-center bg-white/90 backdrop-blur-sm shadow-xl border-0">
+                  <Filter className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-gray-800 mb-2">No Records Found</h3>
+                  <p className="text-gray-600">
+                    No records match your current filters. Try adjusting your search criteria.
+                  </p>
+                  <Button onClick={clearFilters} className="mt-4">
+                    Clear All Filters
+                  </Button>
+                </Card>
+              )
             ) : (
-              studyHistory.map((record) => (
+              filteredHistory.map((record) => (
                 <Card key={record.id} className="p-6 bg-white/90 backdrop-blur-sm shadow-lg border-0">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex-1">
@@ -195,7 +381,6 @@ const StudyHistory = () => {
                       <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
                         <div className="flex items-center gap-1">
                           <Calendar className="h-4 w-4" />
-                          {/* --- CORRECTED: Removed .toDate() --- */}
                           {record.timestamp.toLocaleDateString()} at {record.timestamp.toLocaleTimeString()}
                         </div>
                         <Badge className="bg-gradient-to-r from-blue-500 to-purple-600 text-white">
@@ -214,7 +399,28 @@ const StudyHistory = () => {
                       )}
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                      {record.type === "analysis" && record.analysisData && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRetakeQuiz(record)}
+                          disabled={isRetakingQuiz === record.id}
+                          className="flex items-center gap-2 text-green-600 hover:text-green-700 hover:bg-green-50"
+                        >
+                          {isRetakingQuiz === record.id ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-4 w-4" />
+                              Retake Quiz
+                            </>
+                          )}
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"

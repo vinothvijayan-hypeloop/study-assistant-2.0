@@ -139,6 +139,8 @@ Generate ONLY these types of questions:
 - Assertion-Reason questions - 30%
 
 For MCQ questions, provide 4 clear options (A, B, C, D).
+IMPORTANT: The "answer" field should contain ONLY the option letter (A, B, C, or D), not the full option text.
+
 For Assertion-Reason questions, provide:
 - Assertion statement
 - Reason statement  
@@ -149,7 +151,7 @@ Return as a JSON array:
   {
     "question": "Question text here",
     "options": ["Option A", "Option B", "Option C", "Option D"],
-    "answer": "Correct option (A/B/C/D)",
+    "answer": "A",
     "type": "mcq" | "assertion_reason",
     "difficulty": "${difficulty}",
     "tnpscGroup": "Group 1" | "Group 2" | "Group 4",
@@ -163,6 +165,8 @@ Ensure questions test:
 - Application ability
 - TNPSC exam pattern relevance
 - Based on the crisp key points provided for easy memorization
+
+CRITICAL: Make sure the "answer" field contains only the letter (A, B, C, or D) that corresponds to the correct option.
 `;
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {

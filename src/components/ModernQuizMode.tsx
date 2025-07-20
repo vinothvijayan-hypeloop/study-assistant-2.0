@@ -1,3 +1,188 @@
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { ArrowLeft, CheckCircle, AlertTriangle, Brain, Trophy, Target, Award, Clock, Download, Sparkles } from "lucide-react";
+import { QuestionResult, Question } from "./StudyAssistant";
+import { downloadPDF } from "@/utils/pdfUtils";
+import { saveStudyHistory } from "@/services/studyHistoryService";
+import { useAuthState } from "react-firebase-hooks/auth";
+import { auth } from "@/config/firebase";
+import { toast } from "sonner";
+
+interface ModernQuizModeProps {
+  result: QuestionResult;
+  onReset: () => void;
+  onBackToAnalysis: () => void;
+  difficulty: string;
+  outputLanguage: "english" | "tamil";
+}
+
+interface UserAnswer {
+  questionIndex: number;
+  selectedOption: string;
+}
+
+interface QuizResult {
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  answers: {
+    question: Question;
+    userAnswer: string;
+    correctAnswer: string;
+    isCorrect: boolean;
+    questionIndex: number;
+  }[];
+}
+
+const ModernQuizMode = ({ result, onReset, onBackToAnalysis, difficulty, outputLanguage }: ModernQuizModeProps) => {
+  const [user] = useAuthState(auth);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
+  const [selectedOption, setSelectedOption] = useState<string>("");
+  const [quizCompleted, setQuizCompleted] = useState(false);
+  const [quizResult, setQuizResult] = useState<QuizResult | null>(null);
+  const [startTime] = useState<Date>(new Date());
+
+  const questions = result.questions || [];
+  const currentQuestion = questions[currentQuestionIndex];
+  const progress = questions.length > 0 ? ((currentQuestionIndex + 1) / questions.length) * 100 : 0;
+
+  const getDifficultyColor = (diff: string) => {
+    const colors = {
+      'easy': 'from-green-500 to-emerald-600',
+      'medium': 'from-yellow-500 to-orange-600', 
+      'hard': 'from-red-500 to-pink-600',
+      'very-hard': 'from-purple-500 to-indigo-600'
+    };
+    return colors[diff as keyof typeof colors] || 'from-gray-500 to-gray-600';
+  };
+
+  const getQuestionTypeIcon = (type: string) => {
+    switch (type) {
+      case 'mcq':
+        return '📝';
+      case 'assertion_reason':
+        return '🔗';
+      default:
+        return '❓';
+    }
+  };
+
+  const handleAnswerSelect = (value: string) => {
+    setSelectedOption(value);
+  };
+
+  const handleNextQuestion = () => {
+    if (!selectedOption.trim()) {
+      toast.error("Please select an answer before proceeding");
+      return;
+    }
+
+    const newAnswer: UserAnswer = {
+      questionIndex: currentQuestionIndex,
+      selectedOption: selectedOption
+    };
+
+    const updatedAnswers = [...userAnswers.filter(a => a.questionIndex !== currentQuestionIndex), newAnswer];
+    setUserAnswers(updatedAnswers);
+
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      const savedAnswer = updatedAnswers.find(a => a.questionIndex === currentQuestionIndex + 1);
+      setSelectedOption(savedAnswer?.selectedOption || "");
+    } else {
+      calculateResults(updatedAnswers);
+    }
+  };
+
+  const handlePreviousQuestion = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex(currentQuestionIndex - 1);
+      const savedAnswer = userAnswers.find(a => a.questionIndex === currentQuestionIndex - 1);
+      setSelectedOption(savedAnswer?.selectedOption || "");
+    }
+  };
+
+  // Fixed answer validation logic
+  const calculateResults = (answers: UserAnswer[]) => {
+    const results = answers.map(answer => {
+      const question = questions[answer.questionIndex];
+      
+      // Improved answer validation - handle both option letters and full option text
+      let isCorrect = false;
+      const userAnswer = answer.selectedOption.trim();
+      const correctAnswer = question.answer?.trim() || "";
+      
+      // Check if user selected by option letter (A, B, C, D)
+      if (userAnswer.length === 1 && /^[A-D]$/i.test(userAnswer)) {
+        // User selected option letter, compare with correct answer letter
+        isCorrect = userAnswer.toLowerCase() === correctAnswer.toLowerCase();
+      } else {
+        // User selected full option text, find the corresponding letter
+        const optionIndex = question.options?.findIndex(option => 
+          option.trim().toLowerCase() === userAnswer.toLowerCase()
+        );
+        
+        if (optionIndex !== undefined && optionIndex !== -1) {
+          const userOptionLetter = String.fromCharCode(65 + optionIndex); // Convert to A, B, C, D
+          isCorrect = userOptionLetter.toLowerCase() === correctAnswer.toLowerCase();
+        } else {
+          // Direct text comparison as fallback
+          isCorrect = userAnswer.toLowerCase() === correctAnswer.toLowerCase();
+        }
+      }
+      
+      return {
+        question,
+        userAnswer: answer.selectedOption,
+        correctAnswer: question.answer || "",
+        isCorrect,
+        questionIndex: answer.questionIndex
+      };
+    });
+
+    const score = results.filter(r => r.isCorrect).length;
+    const percentage = Math.round((score / questions.length) * 100);
+
+    const quizResultData = {
+      score,
+      totalQuestions: questions.length,
+      percentage,
+      answers: results
+    };
+
+    setQuizResult(quizResultData);
+
+    // Save quiz results to study history
+    if (user) {
+      saveStudyHistory(
+        user.uid,
+        "quiz",
+        quizResultData,
+        {
+          fileName: `Quiz - ${difficulty.toUpperCase()} - ${new Date().toLocaleDateString()}`,
+          difficulty,
+          language: outputLanguage,
+          score,
+          totalQuestions: questions.length,
+          percentage,
+          quizAnswers: results
+        }
+      ).then(() => {
+        console.log("Quiz results saved to study history successfully");
+      }).catch(error => {
+        console.error("Failed to save quiz results:", error);
+        toast.error("Failed to save quiz results to history");
+      });
+    }
+
+    setQuizCompleted(true);
+    toast.success("🎉 Quiz completed successfully!");
+  };
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -359,164 +544,5 @@ const ModernQuizMode = ({ result, onReset, onBackToAnalysis, difficulty, outputL
 
                     {answer.question.explanation && (
                       <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+import { useState } from "react";
                         <div className="flex items-start gap-2">
-                          <span className="font-semibold text-gray-700">Explanation:</span>
-                          <span className="text-blue-700">{answer.question.explanation}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 relative overflow-hidden">
-      {/* Animated Background Elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-400/20 to-purple-400/20 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-indigo-400/20 to-pink-400/20 rounded-full blur-3xl animate-pulse" style={{animationDelay: '2s'}}></div>
-      </div>
-      
-      <div className="p-4 relative z-10">
-      <div className="container mx-auto max-w-4xl space-y-6">
-        {/* Quiz Header */}
-        <Card className="glass-card p-6 animate-fadeInUp hover-lift">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Button
-                onClick={onBackToAnalysis}
-                variant="ghost"
-                className="text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 rounded-xl transition-all duration-300"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Analysis
-              </Button>
-              
-              <div className="flex items-center gap-3">
-                <div className={`p-3 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 shadow-elegant pulse-glow`}>
-                  <Brain className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold gradient-text">TNPSC Smart Quiz</h1>
-                  <p className="text-gray-600 text-sm">Question {currentQuestionIndex + 1} of {questions.length}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm text-gray-600">
-                <span>Progress</span>
-                <span>{Math.round(progress)}% Complete</span>
-              </div>
-              <div className="progress-elegant">
-                <div className="progress-fill" style={{ width: `${progress}%` }}></div>
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Current Question */}
-        <Card className="glass-card p-8 animate-fadeInScale hover-lift">
-          <div className="space-y-6">
-            <div className="flex items-start justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{getQuestionTypeIcon(currentQuestion?.type)}</span>
-                  <h2 className="text-3xl font-bold gradient-text">
-                    Question {currentQuestionIndex + 1}
-                  </h2>
-                </div>
-                <Badge className={`bg-gradient-to-r ${getDifficultyColor(difficulty)} text-white`}>
-                  {difficulty.replace('-', ' ').toUpperCase()}
-                </Badge>
-              </div>
-              
-              <Badge variant="outline" className="text-sm">
-                {currentQuestion?.tnpscGroup || "TNPSC"}
-              </Badge>
-            </div>
-            
-            <div className="glass-card p-6">
-              <p className="text-gray-800 text-xl leading-relaxed font-medium">{currentQuestion?.question}</p>
-            </div>
-            
-            {currentQuestion?.options && Array.isArray(currentQuestion.options) && currentQuestion.options.length > 0 && (
-              <RadioGroup value={selectedOption} onValueChange={handleAnswerSelect}>
-                <div className="space-y-4">
-                  {currentQuestion.options.map((option, index) => (
-                    <div key={index} className="group animate-fadeInUp" style={{animationDelay: `${index * 0.1}s`}}>
-                      <div className={`glass-card p-4 cursor-pointer transition-all duration-300 hover-lift ${
-                        selectedOption === option 
-                          ? 'border-2 border-blue-500 bg-blue-50/50 shadow-elegant' 
-                          : 'border border-gray-200 hover:border-blue-300 hover:bg-blue-50/30'
-                      }`}>
-                        <div className="flex items-center space-x-4">
-                          <RadioGroupItem value={option} id={`option-${index}`} className="w-6 h-6" />
-                          <Label htmlFor={`option-${index}`} className="flex-1 cursor-pointer">
-                            <div className="flex items-start gap-3">
-                              <span className={`font-bold text-lg px-3 py-1 rounded-full ${
-                                selectedOption === option 
-                                  ? 'bg-blue-500 text-white' 
-                                  : 'bg-gray-200 text-gray-700'
-                              }`}>
-                                {String.fromCharCode(65 + index)}
-                              </span>
-                              <span className="text-gray-800 text-lg leading-relaxed font-medium">{option}</span>
-                            </div>
-                          </Label>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </RadioGroup>
-            )}
-          </div>
-
-          <div className="flex justify-between items-center pt-8 border-t border-gray-200 mt-8">
-            <Button
-              onClick={handlePreviousQuestion}
-              variant="outline"
-              disabled={currentQuestionIndex === 0}
-              className="btn-secondary py-3 px-6"
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Previous
-            </Button>
-
-            <div className="text-base text-gray-600 text-center font-medium">
-              <span className="font-medium">{currentQuestionIndex + 1}</span> of <span className="font-medium">{questions.length}</span>
-            </div>
-
-            <Button
-              onClick={handleNextQuestion}
-              className="btn-primary py-3 px-6"
-            >
-              {currentQuestionIndex === questions.length - 1 ? (
-                <>
-                  <Award className="h-4 w-4 mr-2" />
-                  Submit Quiz
-                </>
-              ) : (
-                <>
-                  Next Question
-                  <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
-                </>
-              )}
-            </Button>
-          </div>
-        </Card>
-      </div>
-      </div>
-    </div>
-  );
-};
-
-export default ModernQuizMode;

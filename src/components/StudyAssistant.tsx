@@ -419,6 +419,13 @@ const StudyAssistant = () => {
     setCurrentView("quiz");
   };
 
+  // Handle retake quiz from study history
+  React.useEffect(() => {
+    if (questionResult && currentView === "upload") {
+      setCurrentView("quiz");
+    }
+  }, [questionResult]);
+
   const handlePdfNavigatorQuiz = async (pageRange: { start: number; end: number }, difficulty: string) => {
     if (!pdfInfo) return;
     

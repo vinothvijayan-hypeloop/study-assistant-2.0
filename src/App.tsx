@@ -13,12 +13,21 @@ import UserProfile from "./components/UserProfile";
 import ArivuChatbot from "./components/ArivuChatbot";
 import LandingPage from "./components/LandingPage";
 import { AppProvider } from "./contexts/AppContext";
+import { useAppContext } from "./contexts/AppContext";
 
 const queryClient = new QueryClient();
 
 const AppContent = () => {
   const [user, loading] = useAuthState(auth);
   const [currentView, setCurrentView] = useState("study");
+  const { questionResult } = useAppContext();
+
+  // Handle navigation to quiz when retake quiz is triggered from study history
+  React.useEffect(() => {
+    if (questionResult && currentView === "history") {
+      setCurrentView("study");
+    }
+  }, [questionResult]);
 
   if (loading) {
     return (
